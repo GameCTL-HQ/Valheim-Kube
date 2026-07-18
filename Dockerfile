@@ -21,8 +21,11 @@ RUN mkdir -p /steamcmd && cd /steamcmd \
 # build id); harmless default for local builds.
 ARG VALHEIM_BUILDID=dev
 RUN echo "target buildid: ${VALHEIM_BUILDID}" \
-    && /steamcmd/steamcmd.sh +force_install_dir /opt/valheim +login anonymous \
-       +app_update 896660 validate +quit \
+    && for i in 1 2 3 4 5; do \
+         /steamcmd/steamcmd.sh +force_install_dir /opt/valheim +login anonymous +app_update 896660 validate +quit && break \
+         || { echo "steamcmd attempt $i failed (cold-start config race); sleep + retry"; sleep 10; }; \
+       done \
+    && test -f /opt/valheim/steamapps/appmanifest_896660.acf \
     && grep -E '"buildid"' /opt/valheim/steamapps/appmanifest_896660.acf
 
 
