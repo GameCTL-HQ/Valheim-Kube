@@ -1,0 +1,70 @@
+name: build-and-push
+
+# Builds the Valheim dedicated-server image (server baked at build time from
+# Steam's CDN via Valve's official steamcmd, anonymous) and publishes to GHCR
+# with the built-in GITHUB_TOKEN (no PAT). The weekly schedule picks up new
+# Valheim builds; the tag pins the exact Steam build id.
+on:
+  push:
+    branches: [main]
+    paths: [Dockerfile, entrypoint.sh, .github/workflows/build.yml]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'   # daily — game servers reject outdated versions
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/gamectl-hq/valheim-kube
+  APPID: '896660'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve current Steam build id
+        id: v
+        run: |
+          # SteamCMD's public app_info via the unauthenticated web API mirror.
+          bid="$(curl -fsSL "https://api.steamcmd.net/v1/info/${APPID}" \
+                 | jq -r ".data[\"${APPID}\"].depots.branches.public.buildid" || true)"
+          [ -n "$bid" ] && [ "$bid" != "null" ] || bid="$(date +%Y%m%d)"
+          echo "bid=$bid" >> "$GITHUB_OUTPUT"
+          echo "Building Valheim build $bid"
+
+      - name: Skip if this build is already published
+        id: skip
+        run: |
+          if docker manifest inspect "${IMAGE}:build-${{ steps.v.outputs.bid }}" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.skip.outputs.skip == 'false'
+
+      - uses: docker/login-action@v3
+        if: steps.skip.outputs.skip == 'false'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        if: steps.skip.outputs.skip == 'false'
+        with:
+          context: .
+          push: true
+          build-args: |
+            VALHEIM_BUILDID=${{ steps.v.outputs.bid }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:build-${{ steps.v.outputs.bid }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/GameCTL-HQ/Valheim-Kube
+            org.opencontainers.image.description=Valheim dedicated server (Steam build ${{ steps.v.outputs.bid }}) for Kubernetes (GameCTL)
