@@ -24,6 +24,12 @@ fi
 mkdir -p "$GAMEDIR" "$CFG/.gamectl/steamhome"
 # No recursive chown (NFS crawl); the game only writes under $CFG top-levels.
 chown "$uid:$gid" "$CFG" "$CFG/.gamectl" 2>/dev/null || true
+# Fix ownership of files dropped onto the share as root (e.g. an operator
+# scp'ing in saves/worlds) — kubelet does not apply fsGroup to NFS volumes,
+# and root-owned data files can break the server in silent ways (see
+# Necesse-Kube d4b719f). Only touches mismatched files; the steamcmd install
+# tree is pruned (large, root-managed, read-only for the run user).
+find "$CFG" -path "$CFG/.gamectl" -prune -o ! -user "$uid" -exec chown "$uid:$gid" {} + 2>/dev/null || true
 
 steamcmd_update() {
   for i in 1 2 3 4 5 6; do
